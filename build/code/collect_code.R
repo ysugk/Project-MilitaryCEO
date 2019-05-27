@@ -105,9 +105,93 @@ byperiod_crawl <- function(begin, end) {
   write_csv(df, glue("build/temp/DomesticContractInfo/", begin, "_", end, ".csv"))
 }
 
-walk2(begin_seq[10:19], end_seq[10:19], byperiod_crawl)
+walk2(begin_seq, end_seq, byperiod_crawl)
 df <- vroom(dir_ls("build/temp/DomesticContractInfo/"))
 vroom_write(df, "build/output/domestic_cntrct.csv")
 
 # Bid Information
+## Facility Nego
+base_url <- "http://openapi.d2b.go.kr/openapi/service/BidResultInfoService/"
+operation <- "getFcltyOthbcVltrnNtatResultList?"
+
+date_seq <- seq.Date(from = ymd(20060101),
+                     to = ymd(20190101),
+                     by = "1 year")
+
+begin_seq <- date_seq[2:length(date_seq) - 1] %>% str_remove_all("-")
+end_seq <- (date_seq[2:length(date_seq)] - ddays(1)) %>% str_remove_all("-")
+
+get_totalCount <- function(ntatComptDateBegin, ntatComptDateEnd) {
+  json <- glue(base_url, operation, ntatComptDateBegin, "&", ntatComptDateEnd) %>%
+    jsonlite::fromJSON()
+  
+  json$response$body$totalCount
+}
+
+bypage_crawl <- function (p, ntatComptDateBegin, ntatComptDateEnd) {
+  Sys.sleep(1)
+  
+  pageNo <- glue("pageNo=", p)
+  numOfRows <- "numOfRows=10000"
+  
+  option <- glue(ntatComptDateBegin, ntatComptDateEnd, numOfRows, pageNo, .sep = "&")
+  url <- glue(base_url, operation, option)
+  json <- jsonlite::fromJSON(url)
+  
+  json$response$body$items %>%
+    first() %>%
+    mutate_all(as.character)
+}
+
+byperiod_crawl <- function(begin, end) {
+  print(glue("Processing ", begin, "--", end))
+  
+  ntatComptDateBegin <- glue("ntatComptDateBegin=", begin)
+  ntatComptDateEnd <- glue("ntatComptDateEnd=", end)
+  
+  totalCount <- get_totalCount(ntatComptDateBegin, ntatComptDateEnd)
+  totalPage <- ceiling(totalCount/10000)
+  
+  df <- map_dfr(1:totalPage, bypage_crawl, ntatComptDateBegin, ntatComptDateEnd)
+  write_csv(df, glue("build/temp/FacilityNegoResult/", begin, "_", end, ".csv"))
+}
+
+walk2(begin_seq, end_seq, byperiod_crawl)
+df <- vroom(dir_ls("build/temp/FacilityNegoResult/"))
+vroom_write(df, "build/output/facility_negoresult.csv")
+
+## Facility Nego Detail
+facility_negoresult <- read_delim("build/output/facility_negoresult.csv", delim = "\t")
+operation <- "getFcltyOthbcVltrnNtatResultDetail?"
+
+orntCode <- paste0("orntCode=", facility_negoresult$orntCode)
+cntrwkNo <- paste0("cntrwkNo=", facility_negoresult$cntrwkNo)
+ntatPlanDate <- paste0("ntatPlanDate=", facility_negoresult$ntatPlanDate)
+pblancOdr <- paste0("pblancOdr=", facility_negoresult$pblancOdr)
+option <- paste(orntCode, cntrwkNo, ntatPlanDate, pblancOdr, sep = "&")
+
+url_seq <- paste0(base_url, operation, option)
+
+byurl_crawl <- function(i) {
+  
+  print(glue("Processing ", url_seq[i]))
+  Sys.sleep(0.1)
+  url <- url_seq[i]
+  
+  json <- jsonlite::fromJSON(url)
+  
+  if (json$response$body == "") {
+    return(NULL)
+  }
+  
+  df <- json$response$body$item %>%
+    bind_cols()
+  
+  write_csv(df, glue("build/temp/FacilityNegoDetail/", i, ".csv"))
+}
+
+walk(1:length(url_seq), byurl_crawl)
+df <- dir_ls("build/temp/FacilityNegoDetail") %>%
+  map_dfr(read_csv)
+
 
