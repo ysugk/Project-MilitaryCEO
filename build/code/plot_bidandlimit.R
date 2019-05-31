@@ -6,6 +6,7 @@ sc <- spark_connect("local")
 
 detail <- spark_read_csv(sc, name = "detail_tbl", "build/output/facility_cmptdetail.csv")
 prtcpt <- spark_read_csv(sc, name = "prtcpt_tbl", "build/output/facility_cmptprtcpt.csv")
+bizno_id_map <- read_csv("build/output/bizno_id_map.csv", col_types = "ccccc")
 
 tidy_prtcpt <- select(prtcpt, -bidMth, -bidResult, -cntrctMth, -cntrwkNm, -ornt, -pblancSe, -sucbidrDecsnMth) %>%
   right_join(filter(detail,
@@ -13,6 +14,19 @@ tidy_prtcpt <- select(prtcpt, -bidMth, -bidResult, -cntrctMth, -cntrwkNm, -ornt,
                     between(bsisPreparPc*(1 + asessRtUplmt/100)/1.1, 5e9, 15e9)),
              by = c("opengDt", "cntrwkNo", "pblancNo", "pblancOdr")) %>%
   collect()
+
+detail %>%
+  filter(bidResult == "낙찰",
+        between(bsisPreparPc*(1 + asessRtUplmt/100)/1.1, 5e9, 15e9)) %>%
+  sdf_dim()
+
+detail %>%
+  filter(bidResult == "낙찰",
+         between(bsisPreparPc*(1 + asessRtUplmt/100)/1.1, 5e9, 15e9)) %>%
+  collect() %>%
+  inner_join(bizno_id_map, by = c("scsbidEntrpsBsnmRegistNo" = "bznsRgnb", "scsbidEntrpsNm" = "mfkrName")) %>%
+  count(id, name, sort = TRUE) %>%
+  View()
 
 limit_plot <- detail %>%
   collect() %>%
@@ -33,25 +47,27 @@ limit_plot <- detail %>%
   theme_few(base_family = "sans")
 
 bid_plot <- tidy_prtcpt %>%
-  drop_na(bidnRate, bidxNote) %>%
-  mutate(below = if_else(bidxNote == "낙찰하한가미만", "Yes", "No"),
-         bidnRate = bidnRate/100) %>%
+  mutate(running_var = bsisPreparPc*(1 + asessRtUplmt/100)/1.1,
+         bidnRate = bidnRate/100,
+         bucket = cut(running_var,
+                      breaks = seq(5e9, 15e9, 0.5e9),
+                      labels = seq(5.5e9, 15e9, 0.5e9) - 0.25e9,
+                      include.lowest = TRUE) %>%
+           as.character() %>%
+           as.numeric()) %>%
   ggplot() +
-  geom_point(aes(x = bsisPreparPc*(1 + asessRtUplmt/100)/1.1, y = bidnRate, color = below),
-             alpha = 0.2) +
+  geom_hline(yintercept = 10e9, color = colorblind_pal()(8)[6], linetype = "dashed") +
+  geom_density_ridges2(aes(x = bidnRate, y = bucket, group = bucket)) +
   
-  geom_vline(xintercept = 10e9, color = colorblind_pal()(8)[6], linetype = "dashed") +
-  
-  scale_x_continuous(name = "Estimated Cost (billion KRW)",
-                     labels = function(x) x/1e9,
-                     breaks = seq(7e9, 13e9, 1e9)) +
-  scale_y_continuous(name = "Bid Price (%)",
+  scale_x_continuous(name = "Bid Price (%)",
                      labels = scales::percent,
                      breaks = seq(0.7, 1, 0.05)) +
-  scale_color_colorblind(name = "Below Cutoffs") +
-  coord_cartesian(xlim = c(7e9, 13e9), ylim = c(0.7, 1)) +
+  scale_y_continuous("Estimated Cost (billion KRW)",
+                     breaks = seq(7e9, 13e9, 1e9),
+                     labels = function(x) x/1e9) +
   
-  guides(color = FALSE) +
+  coord_flip(xlim = c(0.7, 1), ylim = c(7e9, 13e9)) +
+  
   theme_few(base_family = "sans")
 
 win_plot <- tidy_prtcpt %>%
