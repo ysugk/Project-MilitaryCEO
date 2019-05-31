@@ -287,20 +287,27 @@ operation <- "getFcltyCmpetBidResultMnufList?"
 orntCode <- paste0("orntCode=", facility_cmptresult$orntCode)
 cntrwkNo <- paste0("cntrwkNo=", facility_cmptresult$cntrwkNo)
 ntatPlanDate <- paste0("ntatPlanDate=", facility_cmptresult$opengDate)
-option <- paste(cntrwkNo, orntCode, ntatPlanDate, sep = "&")
+numOfRows <- paste0("numOfRows=", 10000)
+option <- paste(cntrwkNo, orntCode, ntatPlanDate, numOfRows, sep = "&")
 
 url_seq <- paste0(base_url, operation, option)
 
 byurl_crawl <- function(i) {
   
-  print(glue("Processing ", url_seq[i]))
+  print(glue("Processing ", i, "th row"))
   Sys.sleep(0.1)
   url <- url_seq[i]
   
   json <- jsonlite::fromJSON(url)
   
+  print(glue("Total Count is ", json$response$body$totalCount))
+  
   if (json$response$body == "") {
     return(NULL)
+  }
+  
+  if (json$response$body$totalCount > 10000) {
+    break
   }
   
   df <- json$response$body$item %>%
@@ -308,8 +315,6 @@ byurl_crawl <- function(i) {
   
   write_csv(df, glue("build/temp/FacilityCompetitionParticipant/", i, ".csv"))
 }
-
-str_extract(path_seq[1000], "\\d+(?=.csv)")
 
 walk(1:length(url_seq), byurl_crawl)
 path_seq <- fs::dir_ls("build/temp/FacilityCompetitionParticipant")
